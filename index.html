@@ -14,15 +14,15 @@ import { getFirestore, doc, setDoc, onSnapshot }
   from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 // ════════════════════════════════════════════════════
-//  KONFIGURASI FIREBASE — project sama dengan dashboard KPI
+//  KONFIGURASI FIREBASE — project khusus dashboard ini
 // ════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey:            "AIzaSyAYWvInXI9qvXd4wCF46KIMa8zIdDI6s_s",
-  authDomain:        "dashboard-puti-tuj.firebaseapp.com",
-  projectId:         "dashboard-puti-tuj",
-  storageBucket:     "dashboard-puti-tuj.firebasestorage.app",
-  messagingSenderId: "549343338296",
-  appId:             "1:549343338296:web:63213fa42b86f8c2522bcd"
+  apiKey:            "AIzaSyB63odAwgK9r4TzgKUeksC4fEnhhq5ESUM",
+  authDomain:        "dashboard-proker-puti-tuj.firebaseapp.com",
+  projectId:         "dashboard-proker-puti-tuj",
+  storageBucket:     "dashboard-proker-puti-tuj.firebasestorage.app",
+  messagingSenderId: "342891225620",
+  appId:             "1:342891225620:web:e38fb4b8f922f8da5e3d01"
 };
 
 // ════════════════════════════════════════════════════
@@ -38,8 +38,9 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
-// Collection terpisah dari dashboard KPI — supaya tidak saling tabrak
-const DOC_REF = doc(db, 'progker_tw2_2026', 'task_status');
+// Project ini khusus untuk dashboard program kerja saja,
+// jadi nama collection bisa disederhanakan.
+const DOC_REF = doc(db, 'progker', 'task_status');
 
 window._fbReady = false;
 window._taskStatusOverrides = {}; // { taskKey: {status, note, updatedBy, updatedAt} }
