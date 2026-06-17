@@ -679,6 +679,11 @@ window.deleteCategory = async (catName) => {
       </select>
       <label>Cari</label>
       <input type="text" id="filter-search" placeholder="Nama task..." oninput="renderTable()" style="width:200px;">
+      <label>Urutkan</label>
+      <select id="sort-mode" onchange="renderTable()">
+        <option value="default">Urutan Asli (sesuai rencana)</option>
+        <option value="urgency">Paling Mendesak Dulu</option>
+      </select>
       <button class="btn-reset" onclick="resetFilters()">Reset</button>
       <span id="filter-count" style="font-size:11px;color:var(--muted);margin-left:auto;"></span>
     </div>
@@ -1256,6 +1261,10 @@ function getOrderedCategories(catList) {
   return [...known, ...extra];
 }
 
+// Urutan status dari paling mendesak ke paling tidak mendesak,
+// dipakai saat mode sort "Paling Mendesak Dulu" dipilih.
+const URGENCY_ORDER = { 'At Risk': 0, 'In Progress': 1, 'Belum Mulai': 2, 'Selesai': 3 };
+
 // Status grup mana yang sedang di-collapse (disimpan di memory, bukan Firestore —
 // supaya tidak mempengaruhi tampilan orang lain yang sedang melihat dashboard ini juga)
 window._collapsedGroups = window._collapsedGroups || {};
@@ -1270,6 +1279,7 @@ function renderTable() {
   const fStatus = document.getElementById('filter-status').value;
   const fMonth  = document.getElementById('filter-month').value;
   const fSearch = document.getElementById('filter-search').value.toLowerCase();
+  const sortMode = document.getElementById('sort-mode').value;
 
   let rows = TASKS.filter(t => {
     if (fPic && !t.pic.includes(fPic)) return false;
@@ -1292,8 +1302,15 @@ function renderTable() {
 
   let html = '';
   orderedCats.forEach((cat, catIdx) => {
-    const groupRows = rows.filter(t => t.cat === cat);
+    let groupRows = rows.filter(t => t.cat === cat);
     if (groupRows.length === 0) return;
+
+    // Urutan asli (sesuai rencana MPP) tetap dipertahankan kecuali
+    // mode "Paling Mendesak Dulu" dipilih — dalam hal itu, urutkan
+    // ulang berdasarkan urgensi status: At Risk > In Progress > Belum Mulai > Selesai.
+    if (sortMode === 'urgency') {
+      groupRows = [...groupRows].sort((a,b) => URGENCY_ORDER[a.status] - URGENCY_ORDER[b.status]);
+    }
 
     const done = groupRows.filter(t=>t.status==='Selesai').length;
     const collapsed = !!window._collapsedGroups[cat];
@@ -1347,6 +1364,7 @@ function resetFilters() {
   document.getElementById('filter-status').value = '';
   document.getElementById('filter-month').value = '';
   document.getElementById('filter-search').value = '';
+  document.getElementById('sort-mode').value = 'default';
   renderTable();
 }
 function filterByPic(pic) {
