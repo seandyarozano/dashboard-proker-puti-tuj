@@ -451,6 +451,36 @@ window.deleteCategory = async (catName) => {
   .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
   .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 
+  /* PROJECT OVERVIEW (ringkasan visual ala MS Project "Project Overview" report) */
+  .po-grid { display: grid; grid-template-columns: 230px 1fr 1.15fr; gap: 22px; }
+  .po-col { display: flex; flex-direction: column; gap: 14px; }
+  .po-complete-box {
+    background: linear-gradient(135deg, var(--navy), var(--blue));
+    color: white; border-radius: 12px; padding: 18px 16px;
+  }
+  .po-complete-label { font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; opacity: 0.8; font-weight: 700; }
+  .po-complete-value { font-size: 40px; font-weight: 800; margin-top: 4px; line-height: 1; }
+  .po-complete-sub { font-size: 10.5px; opacity: 0.75; margin-top: 8px; }
+  .po-subpanel { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; flex: 1; }
+  .po-subpanel-title { font-size: 11px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 0.4px; }
+  .po-subpanel-sub { font-size: 10px; color: var(--muted); margin: 2px 0 8px; }
+  .po-attention-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .po-attention-row:last-child { border-bottom: none; }
+  .po-section-title { font-size: 11px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 0.4px; }
+  .po-section-sub { font-size: 10.5px; color: var(--muted); margin: 2px 0 10px; }
+  .chart-wrap-po { position: relative; height: 270px; }
+  .po-watchlist-table table { font-size: 11px; }
+  .po-watchlist-table th, .po-watchlist-table td { padding: 7px 10px; }
+  .hidden { display: none !important; }
+  @media (max-width: 1100px) {
+    .po-grid { grid-template-columns: 1fr 1fr; }
+    .po-col-right { grid-column: 1 / -1; }
+  }
+  @media (max-width: 700px) {
+    .po-grid { grid-template-columns: 1fr; }
+    .po-col-right { grid-column: auto; }
+  }
+
   /* RESPONSIVE */
   @media (max-width: 1200px) { .pic-grid { grid-template-columns: repeat(3, 1fr); } }
   @media (max-width: 900px) {
@@ -603,7 +633,7 @@ window.deleteCategory = async (catName) => {
     </div>
     <div style="text-align:right;">
       <select id="tw-selector" onchange="switchTW(this.value)" class="tw-selector"></select>
-      <div class="header-date">Periode: <span id="period-display"></span> &nbsp;|&nbsp; Data per: <span id="today-display"></span> &nbsp; <span class="sync-badge" id="syncBadge" style="display:none;">☁ Tersinkron</span></div>
+      <div class="header-date">Periode: <span id="period-display"></span> &nbsp;|&nbsp; Data per: <span id="today-display"></span> &nbsp; <span class="sync-badge" id="today-source-badge" title="Menyinkronkan jam WIB...">⏳ Sinkron...</span> <span class="sync-badge" id="syncBadge" style="display:none;">☁ Tersinkron</span></div>
     </div>
   </div>
 </div>
@@ -636,6 +666,45 @@ window.deleteCategory = async (catName) => {
       <div class="label">Belum Mulai</div>
       <div class="value" id="s-notstarted">—</div>
       <div class="sub">Not Started</div>
+    </div>
+  </div>
+
+  <!-- PROJECT OVERVIEW (ringkasan visual) -->
+  <div class="card" style="margin-bottom: 28px;">
+    <div class="card-header">
+      <h3>📈 Project Overview — Tinjauan Program Kerja</h3>
+      <span style="font-size: 11px; color: var(--muted); font-weight: 600;" id="po-period"></span>
+    </div>
+    <div class="card-body">
+      <div id="po-empty" class="hidden" style="text-align: center; padding: 40px; color: var(--muted);"></div>
+      <div id="po-content" class="po-grid">
+
+        <div class="po-col po-col-left">
+          <div class="po-complete-box">
+            <div class="po-complete-label">% Selesai (Rata-rata)</div>
+            <div class="po-complete-value" id="po-complete-value">—</div>
+            <div class="po-complete-sub" id="po-complete-sub"></div>
+          </div>
+          <div class="po-subpanel">
+            <div class="po-subpanel-title">PIC Perlu Perhatian</div>
+            <div class="po-subpanel-sub">PIC dengan task berstatus At Risk saat ini</div>
+            <div id="po-pic-attention"></div>
+          </div>
+        </div>
+
+        <div class="po-col po-col-mid">
+          <div class="po-section-title">% Complete per Program Utama</div>
+          <div class="po-section-sub">Status untuk semua program utama (top-level). Estimasi % selesai dihitung dari proporsi waktu yang sudah berjalan.</div>
+          <div class="chart-wrap-po"><canvas id="poProjectChart"></canvas></div>
+        </div>
+
+        <div class="po-col po-col-right">
+          <div class="po-section-title">Tugas Mendekati Deadline &amp; Berisiko</div>
+          <div class="po-section-sub">Task yang belum selesai, berstatus At Risk, atau jatuh tempo dalam 7 hari ke depan.</div>
+          <div class="table-wrap po-watchlist-table" id="po-watchlist"></div>
+        </div>
+
+      </div>
     </div>
   </div>
 
@@ -1062,7 +1131,60 @@ window._currentTW = 'tw2_2026';
 // Tanggal "hari ini" dipakai untuk hitung status At Risk/Selesai/dst.
 // Ini global (tidak per-TW) karena merepresentasikan waktu nyata sekarang,
 // terlepas dari TW mana yang sedang dilihat di dashboard.
-const TODAY = new Date('2026-06-12');
+//
+// PENTING: sebelumnya nilai ini di-hardcode manual (mis. '2026-06-12') dan
+// gampang basi kalau lupa diupdate — task yang sudah lewat tenggat jadi
+// tidak terdeteksi karena dashboard masih mengira "hari ini" di tanggal lama.
+// Sekarang TODAY disinkronkan ke jam resmi zona waktu Asia/Jakarta (WIB)
+// dari time API publik saat dashboard dibuka oleh syncTodayWIB() di bagian
+// INIT paling bawah. Nilai di bawah ini hanya placeholder sebelum sinkron selesai.
+let TODAY = new Date();
+let _todaySource = 'device'; // diisi 'ntp' oleh syncTodayWIB() kalau sinkron berhasil
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+}
+
+// Fallback terakhir: ambil tanggal kalender hari ini di Asia/Jakarta dari
+// jam perangkat pengguna (dipaksa ke WIB, bukan timezone lokal browser).
+function getDeviceDateWIB() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); // format YYYY-MM-DD
+}
+
+// Sinkron TODAY ke jam server zona Jakarta. Mencoba 2 layanan time API
+// publik secara berurutan (CORS, tanpa API key); kalau dua-duanya gagal
+// diakses (offline/diblokir/down), pakai jam perangkat sebagai fallback
+// supaya dashboard tetap bisa dipakai, bukan macet menunggu.
+async function syncTodayWIB() {
+  // Sumber 1: timeapi.io
+  try {
+    const res = await withTimeout(fetch('https://timeapi.io/api/Time/current/zone?timeZone=Asia/Jakarta'), 3500);
+    const j = await res.json();
+    if (j && j.year && j.month && j.day) {
+      TODAY = new Date(`${j.year}-${String(j.month).padStart(2, '0')}-${String(j.day).padStart(2, '0')}`);
+      _todaySource = 'ntp';
+      return;
+    }
+  } catch (e) { /* coba sumber berikutnya */ }
+
+  // Sumber 2: worldtimeapi.org
+  try {
+    const res = await withTimeout(fetch('https://worldtimeapi.org/api/timezone/Asia/Jakarta'), 3500);
+    const j = await res.json();
+    if (j && j.datetime) {
+      TODAY = new Date(j.datetime.substring(0, 10)); // "2026-06-17T10:15:..+07:00" -> "2026-06-17"
+      _todaySource = 'ntp';
+      return;
+    }
+  } catch (e) { /* lanjut ke fallback jam perangkat */ }
+
+  // Fallback: jam perangkat, tetap dipaksa baca sebagai tanggal WIB
+  TODAY = new Date(getDeviceDateWIB());
+  _todaySource = 'device';
+}
 
 // =====================================================================
 // COMPUTE STATUS
@@ -1304,6 +1426,129 @@ function renderCharts() {
   });
 
   currentChartInstances.push(barChart, donutChart);
+}
+
+// =====================================================================
+// PROJECT OVERVIEW (ringkasan visual ala MS Project "Project Overview")
+// =====================================================================
+// Estimasi % complete numerik per task. Dashboard ini tidak punya kolom
+// % Complete asli dari MPP, jadi nilainya didekati dari proporsi waktu
+// yang sudah berjalan (sama seperti logika getStatus di atas) — bukan
+// data progres aktual yang diinput PIC. Selesai = 100%, Belum Mulai = 0%.
+function taskPct(t) {
+  if (t.status === 'Selesai') return 100;
+  if (t.status === 'Belum Mulai') return 0;
+  const total = t.end - t.start;
+  if (total <= 0) return 100;
+  const frac = Math.max(0, Math.min(1, (TODAY - t.start) / total));
+  return Math.round(frac * 100);
+}
+
+// Plugin Chart.js lokal untuk menulis angka % di atas setiap bar,
+// menyerupai tampilan report "Project Overview" di Microsoft Project.
+const poBarLabelPlugin = {
+  id: 'poBarLabel',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    chart.data.datasets.forEach((dataset, di) => {
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((bar, i) => {
+        const value = dataset.data[i];
+        ctx.save();
+        ctx.fillStyle = '#3A1014';
+        ctx.font = '700 11px Segoe UI, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(value + '%', bar.x, bar.y - 6);
+        ctx.restore();
+      });
+    });
+  }
+};
+
+let poChartInst = null;
+
+function renderProjectOverview() {
+  const period = TW_PERIODS[window._currentTW];
+  document.getElementById('po-period').textContent = period ? period.periodText : '';
+
+  const emptyEl   = document.getElementById('po-empty');
+  const contentEl = document.getElementById('po-content');
+
+  if (TASKS.length === 0) {
+    emptyEl.textContent = `Belum ada data program kerja untuk ${period ? period.label : 'periode ini'}.`;
+    emptyEl.classList.remove('hidden');
+    contentEl.classList.add('hidden');
+    return;
+  }
+  emptyEl.classList.add('hidden');
+  contentEl.classList.remove('hidden');
+
+  // % SELESAI KESELURUHAN
+  const overallPct = Math.round(TASKS.reduce((a, t) => a + taskPct(t), 0) / TASKS.length);
+  document.getElementById('po-complete-value').textContent = overallPct + '%';
+  document.getElementById('po-complete-sub').textContent = `${TASKS.length} task · ${period ? period.label : ''}`;
+
+  // % COMPLETE PER PROGRAM UTAMA (kategori top-level, urut sesuai MPP)
+  const presentCats = [...new Set(TASKS.map(t => t.cat))];
+  const orderedCats = getOrderedCategories(presentCats);
+  const catPct = orderedCats.map(c => {
+    const ct = TASKS.filter(t => t.cat === c);
+    return Math.round(ct.reduce((a, t) => a + taskPct(t), 0) / ct.length);
+  });
+  const catLabels = orderedCats.map((c, i) => `${i + 1}. ${c}`);
+
+  poChartInst = new Chart(document.getElementById('poProjectChart'), {
+    type: 'bar',
+    data: { labels: catLabels, datasets: [{ data: catPct, backgroundColor: '#9C2B3A', borderRadius: 4, maxBarThickness: 46 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 22 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ctx.parsed.y + '% selesai (estimasi)' } }
+      },
+      scales: {
+        y: { beginAtZero: true, max: 100, ticks: { stepSize: 10, callback: v => v + '%' }, grid: { color: '#EEF2F7' } },
+        x: { ticks: { autoSkip: false, maxRotation: 38, minRotation: 0, font: { size: 10 } }, grid: { display: false } }
+      }
+    },
+    plugins: [poBarLabelPlugin]
+  });
+  currentChartInstances.push(poChartInst);
+
+  // PIC PERLU PERHATIAN (punya task At Risk)
+  const picAttn = ALL_PICS.map(p => ({ p, ar: getPicTasks(p).filter(t => t.status === 'At Risk').length }))
+    .filter(x => x.ar > 0)
+    .sort((a, b) => b.ar - a.ar);
+
+  document.getElementById('po-pic-attention').innerHTML = picAttn.length
+    ? picAttn.map(x => `
+      <div class="po-attention-row">
+        <span style="font-weight:700;color:${PIC_COLORS[x.p] || '#888'}">${x.p}</span>
+        <span class="alert-chip chip-atrisk">⚠ ${x.ar} At Risk</span>
+      </div>`).join('')
+    : '<div style="font-size:11px;color:#007A5A;padding:4px 0;">✅ Tidak ada PIC dengan task At Risk saat ini.</div>';
+
+  // TUGAS MENDEKATI DEADLINE & BERISIKO
+  const horizon = new Date(TODAY.getTime() + 7 * 86400000);
+  const watch = TASKS.filter(t => t.status !== 'Selesai' && (t.status === 'At Risk' || t.end <= horizon))
+    .sort((a, b) => a.end - b.end)
+    .slice(0, 8);
+
+  document.getElementById('po-watchlist').innerHTML = watch.length ? `
+    <table>
+      <thead><tr><th>Nama Task</th><th>Mulai</th><th>Selesai</th><th>Durasi</th><th>%</th><th>PIC</th></tr></thead>
+      <tbody>${watch.map(t => `
+        <tr>
+          <td style="max-width:170px;white-space:normal;">${t.name}</td>
+          <td style="white-space:nowrap;">${fmtDate(t.start)}</td>
+          <td style="white-space:nowrap;color:${t.status === 'At Risk' ? 'var(--overdue)' : 'inherit'};font-weight:${t.status === 'At Risk' ? '700' : '400'};">${fmtDate(t.end)}</td>
+          <td style="white-space:nowrap;color:var(--muted);">${getDurStr(t)}</td>
+          <td>${taskPct(t)}%</td>
+          <td style="white-space:nowrap;">${t.pic.join(', ')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>` : '<p style="text-align:center;color:#007A5A;font-size:12px;padding:16px;">✅ Tidak ada task berisiko / mendekati deadline saat ini.</p>';
 }
 
 // =====================================================================
@@ -1821,6 +2066,7 @@ function fullRender() {
   renderPICCards();
   destroyCharts();
   renderCharts();
+  renderProjectOverview();
   renderTable();
   const activeTab = document.querySelector('.tab-content.active');
   if (activeTab && activeTab.id === 'tab-gantt') renderGantt();
@@ -1847,9 +2093,25 @@ function switchTab(name) {
 // =====================================================================
 // INIT
 // =====================================================================
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await syncTodayWIB(); // tunggu sinkron jam WIB selesai dulu sebelum status task dihitung
+
   document.getElementById('today-display').textContent =
     TODAY.toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+
+  const srcBadge = document.getElementById('today-source-badge');
+  if (srcBadge) {
+    if (_todaySource === 'ntp') {
+      srcBadge.textContent = '🕐 Sinkron WIB';
+      srcBadge.title = 'Tanggal "hari ini" disinkronkan ke jam server zona waktu Asia/Jakarta (WIB).';
+      srcBadge.style.background = 'rgba(255,255,255,0.18)';
+    } else {
+      srcBadge.textContent = '⚠ Jam Perangkat';
+      srcBadge.title = 'Gagal mengambil jam dari time API — memakai jam perangkat (dikonversi ke WIB). Cek koneksi internet kalau ini muncul terus; status At Risk/Selesai bisa salah kalau jam perangkat tidak akurat.';
+      srcBadge.style.background = 'rgba(217,55,74,0.45)';
+    }
+  }
+
   populateTWSelector();
   updateHeaderForTW(window._currentTW);
   initFilterPic();
