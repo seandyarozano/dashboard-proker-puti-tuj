@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard Program Kerja PUTI TUJ — TW-2 2026</title>
+<title>Dashboard Program Kerja PUTI TUJ</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- Firebase SDK -->
 <script type="module">
@@ -38,15 +38,19 @@ const auth = getAuth(app);
 const db   = getFirestore(app);
 const provider = new GoogleAuthProvider();
 
-// Project ini khusus untuk dashboard program kerja saja,
-// jadi nama collection bisa disederhanakan.
-const DOC_REF = doc(db, 'progker', 'task_status');
+// Project ini khusus untuk dashboard program kerja saja.
+// Setiap Triwulan punya dokumen Firestore-nya sendiri, supaya
+// update status TW-2 tidak tercampur dengan TW-1/3/4.
+function getDocRefForTW(twKey) {
+  return doc(db, 'progker', twKey); // twKey contoh: 'tw1_2026', 'tw2_2026', dst
+}
 
 window._fbReady = false;
-window._taskStatusOverrides = {}; // { taskKey: {status, note, updatedBy, updatedAt} }
-window._manualTasks = {};         // { taskKey: {name, pic[], cat, start, end} } -- task tambahan manual
-window._deletedKeys = {};         // { taskKey: true } -- task (MPP atau manual) yang dihapus
-window._deletedCategories = {};   // { catName: true } -- kategori yang dihapus seluruhnya
+window._taskStatusOverrides = {};
+window._manualTasks = {};
+window._deletedKeys = {};
+window._deletedCategories = {};
+window._currentUnsubscribe = null; // listener Firestore yang sedang aktif
 
 onAuthStateChanged(auth, user => {
   window._fbUser = user;
@@ -55,26 +59,36 @@ onAuthStateChanged(auth, user => {
   if (window.updateAuthUI) window.updateAuthUI(user, isPIC);
 });
 
-onSnapshot(DOC_REF, snap => {
-  if (snap.exists()) {
-    const data = snap.data();
-    window._taskStatusOverrides = data.tasks || {};
-    window._manualTasks = data.manualTasks || {};
-    window._deletedKeys = data.deletedKeys || {};
-    window._deletedCategories = data.deletedCategories || {};
-  } else {
-    window._taskStatusOverrides = {};
-    window._manualTasks = {};
-    window._deletedKeys = {};
-    window._deletedCategories = {};
+// Dipanggil setiap kali pengguna berpindah Triwulan. Melepas listener
+// TW sebelumnya (kalau ada), lalu pasang listener baru untuk TW yang dipilih.
+window.switchFirestoreTW = function(twKey) {
+  if (window._currentUnsubscribe) {
+    window._currentUnsubscribe();
+    window._currentUnsubscribe = null;
   }
-  window._fbReady = true;
-  if (window.onFirebaseDataChanged) window.onFirebaseDataChanged();
-}, err => {
-  console.warn('Firestore listener error:', err);
-  window._fbReady = true;
-  if (window.onFirebaseDataChanged) window.onFirebaseDataChanged();
-});
+  window._fbReady = false;
+  const ref = getDocRefForTW(twKey);
+  window._currentUnsubscribe = onSnapshot(ref, snap => {
+    if (snap.exists()) {
+      const data = snap.data();
+      window._taskStatusOverrides = data.tasks || {};
+      window._manualTasks = data.manualTasks || {};
+      window._deletedKeys = data.deletedKeys || {};
+      window._deletedCategories = data.deletedCategories || {};
+    } else {
+      window._taskStatusOverrides = {};
+      window._manualTasks = {};
+      window._deletedKeys = {};
+      window._deletedCategories = {};
+    }
+    window._fbReady = true;
+    if (window.onFirebaseDataChanged) window.onFirebaseDataChanged();
+  }, err => {
+    console.warn('Firestore listener error:', err);
+    window._fbReady = true;
+    if (window.onFirebaseDataChanged) window.onFirebaseDataChanged();
+  });
+};
 
 window.loginWithGoogle = async () => {
   try {
@@ -102,7 +116,7 @@ window.saveTaskUpdate = async (taskKey, statusValue, noteValue, picLabel) => {
       updatedAt: new Date().toISOString()
     };
     const newTasks = { ...window._taskStatusOverrides, [taskKey]: entry };
-    await setDoc(DOC_REF, { tasks: newTasks, _lastSync: new Date().toISOString() }, { merge: true });
+    await setDoc(getDocRefForTW(window._currentTW), { tasks: newTasks, _lastSync: new Date().toISOString() }, { merge: true });
     return true;
   } catch (e) {
     alert('Gagal menyimpan ke Firebase: ' + e.message);
@@ -121,7 +135,7 @@ window.addManualTask = async (taskData) => {
       addedAt: new Date().toISOString()
     };
     const newManual = { ...window._manualTasks, [newKey]: entry };
-    await setDoc(DOC_REF, { manualTasks: newManual, _lastSync: new Date().toISOString() }, { merge: true });
+    await setDoc(getDocRefForTW(window._currentTW), { manualTasks: newManual, _lastSync: new Date().toISOString() }, { merge: true });
     return true;
   } catch (e) {
     alert('Gagal menambah task: ' + e.message);
@@ -134,7 +148,7 @@ window.deleteTask = async (taskKey) => {
   if (!window._isPIC) { alert('Anda tidak memiliki akses untuk menghapus task.'); return false; }
   try {
     const newDeleted = { ...window._deletedKeys, [taskKey]: { deletedBy: window._fbUser.email, deletedAt: new Date().toISOString() } };
-    await setDoc(DOC_REF, { deletedKeys: newDeleted, _lastSync: new Date().toISOString() }, { merge: true });
+    await setDoc(getDocRefForTW(window._currentTW), { deletedKeys: newDeleted, _lastSync: new Date().toISOString() }, { merge: true });
     return true;
   } catch (e) {
     alert('Gagal menghapus task: ' + e.message);
@@ -147,7 +161,7 @@ window.deleteCategory = async (catName) => {
   if (!window._isPIC) { alert('Anda tidak memiliki akses untuk menghapus kategori.'); return false; }
   try {
     const newDeletedCats = { ...window._deletedCategories, [catName]: { deletedBy: window._fbUser.email, deletedAt: new Date().toISOString() } };
-    await setDoc(DOC_REF, { deletedCategories: newDeletedCats, _lastSync: new Date().toISOString() }, { merge: true });
+    await setDoc(getDocRefForTW(window._currentTW), { deletedCategories: newDeletedCats, _lastSync: new Date().toISOString() }, { merge: true });
     return true;
   } catch (e) {
     alert('Gagal menghapus kategori: ' + e.message);
@@ -230,6 +244,13 @@ window.deleteCategory = async (catName) => {
     font-size: 11px; font-weight: 700;
     padding: 4px 12px; border-radius: 20px;
     letter-spacing: 0.5px;
+  }
+  .tw-selector {
+    background: #FFFFFF; color: var(--blue);
+    font-size: 11px; font-weight: 700;
+    padding: 5px 10px; border-radius: 20px;
+    letter-spacing: 0.5px; border: none;
+    cursor: pointer; font-family: inherit;
   }
   .header-date { font-size: 11px; opacity: 0.6; margin-top: 4px; }
 
@@ -580,9 +601,9 @@ window.deleteCategory = async (catName) => {
       <div class="user-chip" id="userInfo" style="display:none;"></div>
       <button class="btn-logout" id="btnLogout" style="display:none;" onclick="logoutGoogle()">Keluar</button>
     </div>
-    <div>
-      <div class="header-badge">TW-2 · 2026</div>
-      <div class="header-date">Periode: April – Juni 2026 &nbsp;|&nbsp; Data per: <span id="today-display"></span> &nbsp; <span class="sync-badge" id="syncBadge" style="display:none;">☁ Tersinkron</span></div>
+    <div style="text-align:right;">
+      <select id="tw-selector" onchange="switchTW(this.value)" class="tw-selector"></select>
+      <div class="header-date">Periode: <span id="period-display"></span> &nbsp;|&nbsp; Data per: <span id="today-display"></span> &nbsp; <span class="sync-badge" id="syncBadge" style="display:none;">☁ Tersinkron</span></div>
     </div>
   </div>
 </div>
@@ -594,7 +615,7 @@ window.deleteCategory = async (catName) => {
     <div class="summary-card">
       <div class="label">Total Task</div>
       <div class="value" id="s-total">—</div>
-      <div class="sub">Program kerja TW-2</div>
+      <div class="sub" id="s-total-sub">Program kerja</div>
     </div>
     <div class="summary-card done">
       <div class="label">Selesai</div>
@@ -673,9 +694,6 @@ window.deleteCategory = async (catName) => {
       <label>Bulan</label>
       <select id="filter-month" onchange="renderTable()">
         <option value="">Semua Bulan</option>
-        <option value="April">April</option>
-        <option value="Mei">Mei</option>
-        <option value="Juni">Juni</option>
       </select>
       <label>Cari</label>
       <input type="text" id="filter-search" placeholder="Nama task..." oninput="renderTable()" style="width:200px;">
@@ -725,7 +743,7 @@ window.deleteCategory = async (catName) => {
 </div>
 
 <div class="footer">
-  Dashboard Program Kerja PUTI TUJ — TW-2 2026 &nbsp;·&nbsp; Data berdasarkan MPP export &nbsp;·&nbsp; Periode: April–Juni 2026
+  Dashboard Program Kerja PUTI TUJ <span id="footer-tw-label">— TW-2 2026</span> &nbsp;·&nbsp; Data berdasarkan MPP export &nbsp;·&nbsp; Periode: <span id="footer-period">April–Juni 2026</span>
 </div>
 
 <!-- MODAL UPDATE PROGRES -->
@@ -828,15 +846,14 @@ window.deleteCategory = async (catName) => {
 
 <script>
 // =====================================================================
-// DATA — diambil langsung dari export MPP
+// DATA — diambil langsung dari export MPP, dikelompokkan per Triwulan
 // =====================================================================
-const TODAY = new Date('2026-06-12');
-const TW_START = new Date('2026-04-01');
-const TW_END   = new Date('2026-06-30');
-
 function d(s){ return new Date(s); }
 
-const RAW_TASKS = [
+// ─────────────────────────────────────────────────────────
+// TW-2 2026 (April–Juni) — data lengkap dari export MPP
+// ─────────────────────────────────────────────────────────
+const RAW_TASKS_TW2_2026 = [
   // Kategori 1: SLA Keberfungsian Infrastruktur
   {name:'Backup Konfigurasi Perangkat Kampus SB April', start:d('2026-04-05'), end:d('2026-04-06'), pic:['Dimel'], cat:'SLA Infrastruktur'},
   {name:'Backup Konfigurasi Perangkat Kampus DM April', start:d('2026-04-05'), end:d('2026-04-06'), pic:['Syafiq'], cat:'SLA Infrastruktur'},
@@ -1000,6 +1017,53 @@ const RAW_TASKS = [
   {name:'Workshop Evaluasi Konten & AI dalam Pembuatan Konten', start:d('2026-06-09'), end:d('2026-06-09'), pic:['Diana','sofyan'], cat:'Konten Artikel Website'},
 ];
 
+// ─────────────────────────────────────────────────────────
+// REGISTRY SEMUA TRIWULAN
+// Tambah TW baru di sini begitu data MPP-nya tersedia.
+// 'rawTasks: []' artinya belum ada data — dashboard akan
+// menampilkan keadaan kosong yang jujur untuk TW tersebut,
+// bukan error atau layar putih.
+// ─────────────────────────────────────────────────────────
+const TW_PERIODS = {
+  'tw1_2026': {
+    label: 'TW-1 · 2026',
+    periodText: 'Januari – Maret 2026',
+    start: d('2026-01-01'),
+    end:   d('2026-03-31'),
+    rawTasks: [], // belum ada data MPP untuk TW-1
+  },
+  'tw2_2026': {
+    label: 'TW-2 · 2026',
+    periodText: 'April – Juni 2026',
+    start: d('2026-04-01'),
+    end:   d('2026-06-30'),
+    rawTasks: RAW_TASKS_TW2_2026,
+  },
+  'tw3_2026': {
+    label: 'TW-3 · 2026',
+    periodText: 'Juli – September 2026',
+    start: d('2026-07-01'),
+    end:   d('2026-09-30'),
+    rawTasks: [], // belum ada data MPP untuk TW-3
+  },
+  'tw4_2026': {
+    label: 'TW-4 · 2026',
+    periodText: 'Oktober – Desember 2026',
+    start: d('2026-10-01'),
+    end:   d('2026-12-31'),
+    rawTasks: [], // belum ada data MPP untuk TW-4
+  },
+};
+
+// TW yang sedang aktif ditampilkan. Default ke TW-2 karena itu
+// satu-satunya periode yang sudah punya data saat ini.
+window._currentTW = 'tw2_2026';
+
+// Tanggal "hari ini" dipakai untuk hitung status At Risk/Selesai/dst.
+// Ini global (tidak per-TW) karena merepresentasikan waktu nyata sekarang,
+// terlepas dari TW mana yang sedang dilihat di dashboard.
+const TODAY = new Date('2026-06-12');
+
 // =====================================================================
 // COMPUTE STATUS
 // =====================================================================
@@ -1015,8 +1079,8 @@ const PIC_INITIALS = {
 const ALL_PICS = ['Dimel','Syafiq','Tatan','Abdul','Sophi','Mega','Diana','sofyan'];
 
 function getMonth(date) {
-  const m = date.getMonth();
-  return m===3?'April':m===4?'Mei':'Juni';
+  const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  return monthNames[date.getMonth()];
 }
 
 function getStatus(task) {
@@ -1033,11 +1097,18 @@ function getStatus(task) {
   return 'In Progress';
 }
 
-const BASE_TASKS = RAW_TASKS.map((t,idx) => ({
-  ...t,
-  key: 'tsk_' + idx + '_' + t.name.replace(/[^a-zA-Z0-9]/g,'').substring(0,30),
-  isManual: false,
-}));
+let BASE_TASKS = []; // dibangun ulang oleh rebuildBaseTasks() setiap kali TW berpindah
+
+function rebuildBaseTasks() {
+  const period = TW_PERIODS[window._currentTW];
+  const rawTasks = period ? period.rawTasks : [];
+  BASE_TASKS = rawTasks.map((t,idx) => ({
+    ...t,
+    key: 'tsk_' + window._currentTW + '_' + idx + '_' + t.name.replace(/[^a-zA-Z0-9]/g,'').substring(0,30),
+    isManual: false,
+  }));
+}
+rebuildBaseTasks();
 
 let TASKS = []; // dibangun ulang oleh applyOverrides() setiap kali data Firebase berubah
 
@@ -1094,7 +1165,7 @@ function computeSummary() {
   const ns = TASKS.filter(t=>t.status==='Belum Mulai').length;
   document.getElementById('s-total').textContent = total;
   document.getElementById('s-done').textContent = done;
-  document.getElementById('s-done-pct').textContent = Math.round(done/total*100)+'% dari total';
+  document.getElementById('s-done-pct').textContent = total > 0 ? Math.round(done/total*100)+'% dari total' : '—';
   document.getElementById('s-inprog').textContent = inp;
   document.getElementById('s-atrisk').textContent = ar;
   document.getElementById('s-notstarted').textContent = ns;
@@ -1110,6 +1181,15 @@ function getPicTasks(pic) {
 function renderPICCards() {
   const grid = document.getElementById('pic-grid');
   grid.innerHTML = '';
+
+  if (TASKS.length === 0) {
+    const period = TW_PERIODS[window._currentTW];
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);background:var(--card);border-radius:12px;border:1px solid var(--border);">
+      Belum ada data program kerja untuk ${period ? period.label : 'periode ini'}.
+    </div>`;
+    return;
+  }
+
   ALL_PICS.forEach(pic => {
     const tasks = getPicTasks(pic);
     if (!tasks.length) return;
@@ -1359,6 +1439,22 @@ function initFilterPic() {
     sel.appendChild(o);
   });
 }
+
+// Mengisi ulang dropdown filter Bulan berdasarkan bulan-bulan yang
+// ada di periode TW yang sedang aktif. Dipanggil setiap kali TW berpindah.
+function initFilterMonth() {
+  const sel = document.getElementById('filter-month');
+  const period = TW_PERIODS[window._currentTW];
+  sel.innerHTML = '<option value="">Semua Bulan</option>';
+  if (!period) return;
+  const labels = getMonthLabelsForPeriod(period.start, period.end);
+  labels.forEach(fullLabel => {
+    const monthOnly = fullLabel.split(' ')[0]; // "April 2026" -> "April"
+    const o = document.createElement('option');
+    o.value = monthOnly; o.textContent = monthOnly;
+    sel.appendChild(o);
+  });
+}
 function resetFilters() {
   document.getElementById('filter-pic').value = '';
   document.getElementById('filter-status').value = '';
@@ -1376,17 +1472,37 @@ function filterByPic(pic) {
 // =====================================================================
 // GANTT
 // =====================================================================
+function getMonthLabelsForPeriod(start, end) {
+  const labels = [];
+  const cur = new Date(start.getFullYear(), start.getMonth(), 1);
+  const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  while (cur <= end) {
+    labels.push(`${monthNames[cur.getMonth()]} ${cur.getFullYear()}`);
+    cur.setMonth(cur.getMonth()+1);
+  }
+  return labels;
+}
+
 function renderGantt() {
   const container = document.getElementById('gantt-body');
-  const startMs = TW_START.getTime();
-  const totalMs = TW_END.getTime() - startMs;
+  const period = TW_PERIODS[window._currentTW];
+
+  if (!period || period.rawTasks.length === 0) {
+    container.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted);">
+      Belum ada data task untuk ${period ? period.label : 'periode ini'}. Timeline akan muncul setelah data MPP tersedia.
+    </div>`;
+    return;
+  }
+
+  const startMs = period.start.getTime();
+  const totalMs = period.end.getTime() - startMs;
   const todayPct = ((TODAY.getTime()-startMs)/totalMs*100).toFixed(1);
+  const monthLabels = getMonthLabelsForPeriod(period.start, period.end);
+  const monthWidth = (100/monthLabels.length).toFixed(2);
 
   let html = `
     <div class="gantt-months">
-      <div class="gantt-month-label" style="width:33.3%">April 2026</div>
-      <div class="gantt-month-label" style="width:33.3%">Mei 2026</div>
-      <div class="gantt-month-label" style="width:33.4%">Juni 2026</div>
+      ${monthLabels.map(m => `<div class="gantt-month-label" style="width:${monthWidth}%">${m}</div>`).join('')}
     </div>
     <div style="position:relative;margin-left:168px;height:2px;background:var(--border);margin-bottom:8px;">
       <div class="gantt-today" style="left:${todayPct}%"></div>
@@ -1432,6 +1548,15 @@ function renderCategoryView() {
   const cats = [...new Set(TASKS.map(t=>t.cat))];
   const grid = document.getElementById('category-grid');
   grid.innerHTML = '';
+
+  if (cats.length === 0) {
+    const period = TW_PERIODS[window._currentTW];
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted);background:var(--card);border-radius:12px;border:1px solid var(--border);">
+      Belum ada program kerja untuk ${period ? period.label : 'periode ini'}.
+    </div>`;
+    return;
+  }
+
   cats.forEach(cat => {
     const tasks = TASKS.filter(t=>t.cat===cat);
     const done = tasks.filter(t=>t.status==='Selesai').length;
@@ -1651,6 +1776,45 @@ function destroyCharts() {
   currentChartInstances = [];
 }
 
+// =====================================================================
+// PERPINDAHAN ANTAR TRIWULAN
+// =====================================================================
+function updateHeaderForTW(twKey) {
+  const period = TW_PERIODS[twKey];
+  if (!period) return;
+  document.getElementById('period-display').textContent = period.periodText;
+  document.getElementById('footer-tw-label').textContent = `— ${period.label}`;
+  document.getElementById('footer-period').textContent = period.periodText;
+  const subEl = document.getElementById('s-total-sub');
+  if (subEl) subEl.textContent = `Program kerja ${period.label.replace(' · ',' ')}`;
+}
+
+function populateTWSelector() {
+  const sel = document.getElementById('tw-selector');
+  sel.innerHTML = Object.keys(TW_PERIODS).map(key => {
+    const p = TW_PERIODS[key];
+    const hasData = p.rawTasks.length > 0;
+    const tag = hasData ? '' : ' (belum ada data)';
+    return `<option value="${key}">${p.label}${tag}</option>`;
+  }).join('');
+  sel.value = window._currentTW;
+}
+
+// Dipanggil saat pengguna memilih Triwulan berbeda dari dropdown.
+// Mengorkestrasikan semua hal yang perlu di-refresh: data dasar,
+// koneksi Firestore, filter, dan seluruh tampilan.
+window.switchTW = function(twKey) {
+  if (!TW_PERIODS[twKey]) return;
+  window._currentTW = twKey;
+  window._collapsedGroups = {}; // reset status lipat/buka grup saat pindah TW
+
+  rebuildBaseTasks();
+  updateHeaderForTW(twKey);
+  initFilterMonth();
+  resetFilters();
+  window.switchFirestoreTW(twKey); // subscribe ulang ke dokumen Firestore TW yang baru, akan memicu fullRender lewat onFirebaseDataChanged
+};
+
 function fullRender() {
   applyOverrides();
   computeSummary();
@@ -1686,8 +1850,11 @@ function switchTab(name) {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('today-display').textContent =
     TODAY.toLocaleDateString('id-ID',{day:'2-digit',month:'long',year:'numeric'});
+  populateTWSelector();
+  updateHeaderForTW(window._currentTW);
   initFilterPic();
-  fullRender();
+  initFilterMonth();
+  window.switchFirestoreTW(window._currentTW); // subscribe pertama kali; fullRender() dipicu otomatis lewat onFirebaseDataChanged
 });
 </script>
 </body>
